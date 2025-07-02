@@ -6,7 +6,7 @@
 // Authors:   Farzaneh Zangenehnejad and Yang Jiang from Dr. Yang Gao's group,
 //            University of Calgary, Calgary, Canada 
 // Contact Email: farzaneh.zangenehnej@ucalgary.ca and yang.jiang1@ucalgary.ca 
-// Version : 1  (Dec 2022)
+// Version : 2  (July 2025)
 */
 
 #include <vector>
@@ -18,9 +18,8 @@
 #include <cmath>
 
 // Enter input and output file names and paths 
-#define  INPUT_FILE   "D:\\gnss_log_2022_11_22_19_33_25.txt"  
-#define  OUTPUT_FILE  "D:\\rinex_converted"
-
+#define  INPUT_FILE   "D:\\px8.txt"  
+#define  OUTPUT_FILE  "D:\\rnx_conv"
 
 #define CLIGHT      299792458.0         /* Speed of light (m/s) */
 #define LeapSecond      18              /* Leap seccond for 2021 */
@@ -37,10 +36,12 @@
 #define SYS_GLO 3
 #define SYS_GAL 6
 #define SYS_BDS 5
+#define SYS_QZS 4
+#define SYS_IRN 7
 
 #define RNX_VER "     3.04           OBSERVATION DATA    M: Mixed            RINEX VERSION / TYPE"
 #define RNX_PGM "UofC CSV2RINEX convertor                                    PGM / RUN BY / DATE "
-#define RNX_APP "        0.0000        0.0000        0.0000                  APPROX POSITION XYZ "
+#define RNX_APP "                                                            APPROX POSITION XYZ "
 #define RNX_ANT "        0.0000        0.0000        0.0000                  ANTENNA: DELTA H/E/N"
 #define RNX_END "                                                            END OF HEADER       "
 
@@ -48,7 +49,8 @@
 
 #define GPS_MEASUREMENT_STATE_UNKNOWN       0
 #define STATE_CODE_LOCK                     1//2^0  
-#define STATE_TOW_KNOWN                     8//2^3
+#define STATE_TOW_DECODED                   8//2^3
+#define STATE_TOW_KNOWN                 16384// maybe TOW not decoded but known from other sources. In contrast, if TOW is decoded then it is known
 
 #define STATE_GLO_STRING_SYNC               64//2^6
 #define STATE_GLO_TOD_KNOWN                 128//2^7
@@ -57,17 +59,23 @@
 #define STATE_GAL_E1BC_CODE_LOCK            1024//2^10
 #define STATE_GAL_E1B_PAGE_SYNC             4096//2^12  
 
-#define GPS_ADR_STATE_UNKNOWN               0
+#define GPS_ADR_STATE_UNKNOWN               0 
 #define GPS_ADR_STATE_VALID                 1//2^0
 #define GPS_ADR_STATE_RESET                 2//2^1
 #define GPS_ADR_STATE_CYCLE_SLIP            4//2^2
+#define GPS_ADR_STATE_HALF_CYCLE_RESOLVED   8//2^3
+#define GPS_ADR_STATE_HALF_CYCLE_REPORTED  16//2^4
 
+#define LLI_SLIP    0x01                /* LLI: cycle-slip */
+#define LLI_HALFC   0x02                /* LLI: half-cycle not resovled */
+#define LLI_BOCTRK  0x04                /* LLI: boc tracking of mboc signal */
+#define LLI_HALFA   0x40                /* LLI: half-cycle added */
+#define LLI_HALFS   0x80                /* LLI: half-cycle subtracted */
 
 #define NEAR_ZERO	0.0001			        /* Threshold to judge if a float equals 0 */
 
 struct gnss_sat
 {
-	char ss[100];
 	long long ElapsedRealtimeMillis;
 	long long time_nano;
 	int leap_second;
@@ -105,15 +113,46 @@ struct gnss_sat
 	// Read the log file created by GnssLogger App in Android v.7 or higher 
 	void parse_from(char* str)
 	{
-		sscanf(str, "%[^,],%lld,%lld,%d,%lf,%lld,%lf,%lf,%lf,%lf,%d,%d,%lf,%d,%lld,%lld,%lf,%lf,%lf,%d,%lf,%lf,%lf,%lld,%lf,%lf,%d,%lf,%d,%lf,%lf",
-			ss, &ElapsedRealtimeMillis, &time_nano, &leap_second, &time_uncertainty_nano, &full_bias_nano,
-			&bias_nano, &bias_uncertainty_nano, &drift_nano_per_second, &drift_uncertainty_nano_per_second,
-			&hardware_clock_discountinuity_count, &svid, &time_offset_nano, &state, &received_sv_time_nano,
-			&received_sv_time_uncertainty_nano, &cn0_dbhz, &pseudorange_rate_meter_per_second,
-			&pseudorange_rate_uncertainty_meter_per_second, &accumulated_delta_range_state,
-			&accumulated_delta_range_meter, &accumulated_delta_range_uncertainty_meter,
-			&carrier_frequency_hz, &carrier_cycle, &carrier_phase, &carrier_phase_uncertainty,
-			&multipath_indicator, &snr_in_db, &constellation_type,&agc_db, &carrier_frequency_hz2);
+		char* token;
+		int field_index = 0;
+		token = strtok(str, ",");
+		token = strtok(NULL, ","); 
+
+		while (token != NULL) {
+			switch (field_index) {
+			case (0): ElapsedRealtimeMillis = atoll(token); break;
+			case (1): time_nano = atoll(token); break;
+			case (2): leap_second = atof(token); break;
+			case (3): time_uncertainty_nano = atof(token); break;
+			case (4): full_bias_nano = atoll(token); break;
+			case (5): bias_nano = atof(token); break;
+			case (6): bias_uncertainty_nano = atof(token); break;
+			case (7): drift_nano_per_second = atof(token); break;
+			case (8): drift_uncertainty_nano_per_second = atof(token); break;
+			case (9): hardware_clock_discountinuity_count = atoi(token); break;
+			case (10):svid = atoi(token); break;
+			case (11):time_offset_nano = atof(token); break;
+			case (12):state = atoi(token); break;
+			case (13):received_sv_time_nano = atoll(token); break;
+			case (14):received_sv_time_uncertainty_nano = atoll(token); break;
+			case (15):cn0_dbhz = atof(token); break;
+			case (16):pseudorange_rate_meter_per_second = atof(token); break;
+			case (17):pseudorange_rate_uncertainty_meter_per_second = atof(token); break;
+			case (18):accumulated_delta_range_state = atoi(token); break;
+			case (19):accumulated_delta_range_meter = atof(token); break;
+			case (20):accumulated_delta_range_uncertainty_meter = atof(token); break;
+			case (21):carrier_frequency_hz = atof(token); break;
+			case (22):carrier_cycle = atoll(token); break;
+			case (23):carrier_phase = atof(token); break;
+			case (24):carrier_phase_uncertainty = atof(token); break;
+			case (25):multipath_indicator = atoi(token); break;
+			case (26):snr_in_db = atof(token); break;
+			case (27):constellation_type = atoi(token); break;
+			default:break;
+			}
+			field_index++;
+			token = strtok(NULL, ","); // Move to next token
+		}
 	}
 };
 
@@ -136,6 +175,7 @@ struct rnx_sat
 	double l[MAX_FRQ];
 	double d[MAX_FRQ];
 	double s[MAX_FRQ];
+	int lli[MAX_FRQ];
 };
 
 struct rnx_epoch
@@ -157,7 +197,7 @@ std::vector<rnx_epoch> rnx;
 char signals[MAX_SYS][MAX_FRQ][5];
 int nsignals[MAX_SYS] = { 0 };
 
-char sys_code[4] = { 'G', 'R', 'E', 'C' };
+char sys_code[5] = { 'G', 'R', 'E', 'C', 'J'};
 int sys_code_function(int sys)
 {
 	int sys_n=-1;
@@ -165,6 +205,7 @@ int sys_code_function(int sys)
 	if (sys == 3) sys_n = 1;
 	if (sys == 6) sys_n = 2;
 	if (sys == 5) sys_n = 3;
+	if (sys == 4) sys_n = 4;
 	return sys_n;
 }
 
@@ -195,12 +236,6 @@ void add_signal(int sys, char* sig)
 void print_rnx_epoch(FILE* fp, rnx_epoch e)
 {
 	
-	//long double b = long double(trunc(long double(e.time[5] * 1e7l))); 
-	//long double b2 = long double(e.time[5] * 1e7l) - long double(b); 
-	//fprintf(fp, "> %04d %02d %02d %02d %02d %10.7lf  0 %2d\n",
-	//	(int)e.time[0], (int)e.time[1], (int)e.time[2], (int)e.time[3],
-	//	(int)e.time[4], b*1e-7, e.sv); //temporarily
-
 	fprintf(fp, "> %04d %02d %02d %02d %02d %10.7lf  0 %2d\n",
 		(int)e.time[0], (int)e.time[1], (int)e.time[2], (int)e.time[3],
 		(int)e.time[4], (e.time[5]*1e7l)/1e7l, e.sv);
@@ -214,17 +249,19 @@ void print_rnx_epoch(FILE* fp, rnx_epoch e)
 
 		for (int i = 0; i < nsig; i++)
 		{
-			if ((*it)->p[i])
-				//fprintf(fp, "%14.3lf  ", (*it)->p[i]-b2*1e-7l *CLIGHT);
-				fprintf(fp, "%14.3lf  ", (*it)->p[i] );
+			if ((*it)->p[i]) 
+				fprintf(fp, "%14.3lf  ", (*it)->p[i]);
 			else
 				fprintf(fp, "                ");
 			if ((*it)->l[i]) {
-				fprintf(fp, "%14.3lf  ", (*it)->l[i]);
-
+				char phase_lli[15]; // 14 chars + null terminator
+				unsigned char lli = (*it)->lli[i] & (LLI_SLIP | LLI_HALFC | LLI_BOCTRK);
+				// Format value + LLI into string 
+				snprintf(phase_lli, sizeof(phase_lli), "%13.3lf%1d", (*it)->l[i], lli);
+				fprintf(fp, "%14s", phase_lli);
 			}
 			else {
-				fprintf(fp, "                ");
+				fprintf(fp, "              ");  // 14 spaces
 			}
 			if ((*it)->d[i])
 				fprintf(fp, "%14.3lf  ", (*it)->d[i]);
@@ -250,8 +287,8 @@ void print_rnx_header(FILE* fp)
 	// Signal types
 	char signal_line[MAX_LINE] = "";
 
-	// Signals GPS, GLO, GAL, BDS
-	for (int i = 0; i < 4; i++)
+	// Signals GPS, GLO, GAL, BDS, QZS
+	for (int i = 0; i < 5; i++)
 	{
 		switch (nsignals[i])
 		{
@@ -377,7 +414,7 @@ int main(int argc, char** argv[])
 		}
 	}
 	fclose(fp);
-	
+
 	// Find each constellation and signal type
 	for (auto it = epochs.begin(); it != epochs.end(); it++) {
 		gnss_sat* sat = it->obs + 0;
@@ -407,6 +444,7 @@ int main(int argc, char** argv[])
 				add_signal(SYS_GLO, sat->signal_name);
 				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e2) * 1e2;
 			}
+			break;
 
 		case 5: // BDS 
 			if (round(sat->carrier_frequency_hz / 1e3) == 1561098)   /* BDS B1-2 1561097984 */
@@ -416,6 +454,14 @@ int main(int argc, char** argv[])
 				add_signal(SYS_BDS, sat->signal_name);
 				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e3) * 1e3;
 			}
+			if (round(sat->carrier_frequency_hz / 1e3) == 1176450)   /* BDS B2a 1176450000 */
+			{
+				sat->sys = SYS_BDS;
+				sprintf(sat->signal_name, "L5%c", 'P');
+				add_signal(SYS_BDS, sat->signal_name);
+				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e3) * 1e3;
+			}
+			break;
 
 		case 6: // GAL
 			if (round(sat->carrier_frequency_hz / 1e4) == 157542)     /* GAL L1 1575420000 */
@@ -432,6 +478,25 @@ int main(int argc, char** argv[])
 				add_signal(SYS_GAL, sat->signal_name);
 				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e4) * 1e4;
 			}
+			break;
+
+		case 4: // QZS
+			sat->svid = sat->svid - 192;
+			if (round(sat->carrier_frequency_hz / 1e4) == 157542)       /* QZSS L1 1575420000 */
+			{
+				sat->sys = SYS_QZS;
+				sprintf(sat->signal_name, "L1%c", 'C');
+				add_signal(SYS_QZS, sat->signal_name);
+				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e4) * 1e4;
+			}
+			else if (round(sat->carrier_frequency_hz / 1e4) == 117645)  /* QZSS L5 1176450000 */
+			{
+				sat->sys = SYS_QZS;
+				sprintf(sat->signal_name, "L5%c", 'Q');
+				add_signal(SYS_QZS, sat->signal_name);
+				sat->carrier_frequency_hz = round(sat->carrier_frequency_hz / 1e4) * 1e4;
+			}
+			break;
 		}
 	}
 
@@ -445,6 +510,7 @@ int main(int argc, char** argv[])
 	int epo_bias = 0;
 	int count = -1;
 	rnx_epoch repoch;
+	rnx_epoch repoch_pre; //previous epoch
 	for (auto it = epochs.begin(); it != epochs.end(); it++)
 	{
 		count++;
@@ -452,6 +518,30 @@ int main(int argc, char** argv[])
 		
 		// Anything within 1ms is considered same epoch :
 		if (fabs(allRxMillis- allRxMillis_p) > NEAR_ZERO) {
+			// Check and correct 4 ms delay/advance for Galileo (E1 and E5a)
+			if (!rnx.empty()) {
+				repoch_pre = rnx.back();
+				if (repoch_pre.sv > 0&&repoch.sv > 0 && round(fabs(allRxMillis - allRxMillis_p)/1000)==1) {
+					for (int j = 0; j < repoch.sv; j++) {
+						int sys = repoch.sats[j]->sys;
+						if (sys == SYS_GAL) {
+							for (int k = 0; k < repoch_pre.sv; k++) {
+								if (repoch.sats[j]->prn == repoch_pre.sats[k]->prn) {
+									if (repoch.sats[j]->p[0] != 0 && repoch_pre.sats[k]->p[0] != 0 && (fabs(repoch.sats[j]->p[0] - repoch_pre.sats[k]->p[0] - 0.004 * CLIGHT) < 1500|| fabs(repoch.sats[j]->p[0] - repoch_pre.sats[k]->p[0] + 0.004 * CLIGHT) < 1500)) {
+										int sign = (repoch.sats[j]->p[0]  - repoch_pre.sats[k]->p[0]) < 0 ? -1 : 1;
+										repoch.sats[j]->p[0] = repoch.sats[j]->p[0] - sign * 0.004 * CLIGHT;
+									}
+									if (repoch.sats[j]->p[1] != 0 && repoch_pre.sats[k]->p[1] != 0 && (fabs(repoch.sats[j]->p[1] - repoch_pre.sats[k]->p[1] - 0.004 * CLIGHT) < 1500 || fabs(repoch.sats[j]->p[1] - repoch_pre.sats[k]->p[1] + 0.004 * CLIGHT) < 1500)) {
+										int sign = (repoch.sats[j]->p[1]  - repoch_pre.sats[k]->p[1]) < 0 ? -1 : 1;
+										repoch.sats[j]->p[1] = repoch.sats[j]->p[1] - sign * 0.004 * CLIGHT;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
 			rnx.push_back(repoch);
 			if (repoch.sv <= 4) {
 				printf("Warning: Number of satellites is less than 4 in this epoch \n");
@@ -484,12 +574,12 @@ int main(int argc, char** argv[])
 		bool new_sat = false;
 		bool available = false;
 			
-		if (obs->sys == SYS_GPS || obs->sys == SYS_BDS)
+		if (obs->sys == SYS_GPS || obs->sys == SYS_BDS || obs->sys == SYS_QZS)
 		{
-			available = obs->state&STATE_CODE_LOCK && obs->state&STATE_TOW_KNOWN;
-			if (round(obs->carrier_frequency_hz / 1e4) == 117645) {
+			available = obs->state&STATE_CODE_LOCK && obs->state&STATE_TOW_DECODED;
+			/*if (round(obs->carrier_frequency_hz / 1e4) == 117645) {
 				available = obs->state & STATE_CODE_LOCK;
-			}
+			}*/
 		}
 		else if (obs->sys == SYS_GLO)
 		{
@@ -497,10 +587,11 @@ int main(int argc, char** argv[])
 		}
 		else if (obs->sys == SYS_GAL)
 		{
-	     	available =((obs->state & STATE_GAL_E1C_2ND_CODE_LOCK) || (obs->state & STATE_GAL_E1BC_CODE_LOCK));
-			if (round(obs->carrier_frequency_hz / 1e4) == 117645) {
-				available = obs->state & STATE_TOW_KNOWN;
-			}
+	     	available =((obs->state & STATE_GAL_E1C_2ND_CODE_LOCK) || ((obs->state & STATE_TOW_DECODED)));
+			
+			/*if (round(obs->carrier_frequency_hz / 1e4) == 117645) {
+				available = obs->state & STATE_TOW_DECODED;
+			}*/
 		}
 
 		if (!available) continue; /* Reject bad observations with invalid state */
@@ -568,6 +659,11 @@ int main(int argc, char** argv[])
 			receive_second = long long(time_from_gps_start) - long long(WeekNonano * 604800 * 1e9l); /* Time of reception in ns */
 
 			break;
+		case SYS_QZS:
+			WeekNonano = long long(floor(-(long double)obs->full_bias_nano * 1e-9l / 604800.0l));
+			receive_second = long long(time_from_gps_start) - long long(WeekNonano * 604800 * 1e9l); /* Time of reception in ns */
+
+			break;
 		}
 
 		/* pr_second is the time difference between time of reception and time of transmission in seconde. */
@@ -584,7 +680,7 @@ int main(int argc, char** argv[])
 			else printf("Week rollover detected and corrected \n");
 		}
 			
-		if ((obs->sys==SYS_GPS||obs->sys==SYS_GAL||obs->sys==SYS_BDS) && pr_second>604800) {
+		if ((obs->sys==SYS_GPS||obs->sys==SYS_GAL||obs->sys==SYS_BDS||obs->sys == SYS_QZS) && pr_second>604800) {
 			pr_second = fmodl(pr_second, 604800.0l);
 		}
 		if (obs->sys == SYS_GLO && pr_second > 86400) {
@@ -602,12 +698,18 @@ int main(int argc, char** argv[])
 			sat->l[frq] = 0;
 		}
 
+		if ((obs->accumulated_delta_range_state & GPS_ADR_STATE_HALF_CYCLE_REPORTED) && !(obs->accumulated_delta_range_state & GPS_ADR_STATE_HALF_CYCLE_RESOLVED)) {
+			sat->lli[frq] = LLI_HALFC;
+		}
+		if (obs->accumulated_delta_range_state & GPS_ADR_STATE_CYCLE_SLIP) {
+			sat->lli[frq] = LLI_SLIP;
+		}
+
 		if (new_sat)
 		{
 			repoch.sats.push_back(sat);
 			repoch.sv++;
-		}
-			
+		}		
 	}
 	rnx.push_back(repoch);
 
